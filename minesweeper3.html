@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>지뢰찾기 게임</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    #game-board {
+      display: grid;
+      gap: 2px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+    .cell {
+      width: 30px;
+      height: 30px;
+      background-color: #ccc;
+      border: 1px solid #999;
+      font-size: 18px;
+      cursor: pointer;
+      text-align: center;
+      line-height: 30px;
+      user-select: none;
+    }
+    .cell.revealed {
+      background-color: #eee;
+      cursor: default;
+    }
+    .cell.flagged {
+      background-color: #f7e45c;
+    }
+    .cell.preview {
+      outline: 2px solid red;
+    }
+    .controls {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>지뢰찾기</h1>
+  <div class="controls">
+    난이도:
+    <select id="difficulty" onchange="resetGame()">
+      <option value="easy">쉬움 (8x8, 10개)</option>
+      <option value="medium" selected>중간 (10x10, 15개)</option>
+      <option value="hard">어려움 (12x12, 25개)</option>
+    </select>
+    <p id="timer">시간: 0초</p>
+    <button onclick="resetGame()">다시 시작</button>
+  </div>
+  <div id="game-board"></div>
+
+  <script>
+    let boardSize = 10;
+    let mineCount = 15;
+    let board = [];
+    let timer;
+    let seconds = 0;
+    let started = false;
+    let mouseButtonsDown = {};
+
+    function getSettings() {
+      const difficulty = document.getElementById('difficulty').value;
+      if (difficulty === 'easy') return [8, 10];
+      if (difficulty === 'medium') return [10, 15];
+      return [12, 25];
+    }
+
+    function createBoard() {
+      const [size, mines] = getSettings();
+      boardSize = size;
+      mineCount = mines;
+
+      const boardElement = document.getElementById('game-board');
+      boardElement.innerHTML = '';
+      boardElement.style.gridTemplateColumns = `repeat(${boardSize}, 30px)`;
+
+      board = [];
+      seconds = 0;
+      started = false;
+      clearInterval(timer);
+      document.getElementById('timer').textContent = '시간: 0초';
+
+      const minePositions = new Set();
+      while (minePositions.size < mineCount) {
+        minePositions.add(Math.floor(Math.random() * boardSize * boardSize));
+      }
+
+      for (let i = 0; i < boardSize * boardSize; i++) {
+        const cell = document.createElement('div');
+        cell.classList.add('cell');
+        cell.dataset.index = i;
+        cell.dataset.row = Math.floor(i / boardSize);
+        cell.dataset.col = i % boardSize;
+        if (minePositions.has(i)) cell.dataset.mine = 'true';
+
+        cell.addEventListener('click', () => handleLeftClick(cell));
+        cell.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          handleRightClick(cell);
+        });
+        cell.addEventListener('mousedown', (e) => {
+          mouseButtonsDown[e.button] = true;
+          if (mouseButtonsDown[0] && mouseButtonsDown[2]) {
+            showChordPreview(cell);
+          }
+        });
+        cell.addEventListener('mouseup', (e) => {
+          mouseButtonsDown[e.button] = false;
+          clearChordPreview();
+        });
+
+        boardElement.appendChild(cell);
+        board.push(cell);
+      }
+    }
+
+    function handleLeftClick(cell) {
+      if (cell.classList.contains('revealed') || cell.classList.contains('flagged')) return;
+
+      if (!started) {
+        started = true;
+        timer = setInterval(() => {
+          seconds++;
+          document.getElementById('timer').textContent = `시간: ${seconds}초`;
+        }, 1000);
+      }
+
+      cell.classList.add('revealed');
+
+      if (cell.dataset.mine === 'true') {
+        cell.textContent = '💣';
+        revealAll();
+        clearInterval(timer);
+        alert('💥 지뢰! 게임 종료');
+      } else {
+        const count = countAdjacentMines(cell);
+        if (count > 0) {
+          cell.textContent = count;
+        } else {
+          revealEmptyArea(cell);
+        }
+        checkWin();
+      }
+    }
+
+    function handleRightClick(cell) {
+      if (cell.classList.contains('revealed')) return;
+      cell.classList.toggle('flagged');
+      cell.textContent = cell.classList.contains('flagged') ? '🚩' : '';
+      checkWin();
+    }
+
+    function showChordPreview(cell) {
+      if (!cell.classList.contains('revealed')) return;
+      const row = parseInt(cell.dataset.row);
+      const col = parseInt(cell.dataset.col);
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const r = row + dr;
+          const c = col + dc;
+          if (r >= 0 && r < boardSize && c >= 0 && c < boardSize) {
+            const neighbor = board[r * boardSize + c];
+            if (!neighbor.classList.contains('revealed')) {
+              neighbor.classList.add('preview');
+            }
+          }
+        }
+      }
+    }
+
+    function clearChordPreview() {
+      board.forEach(cell => cell.classList.remove('preview'));
+    }
+
+    function countAdjacentMines(cell) {
+      const row = parseInt(cell.dataset.row);
+      const col = parseInt(cell.dataset.col);
+      let count = 0;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const r = row + dr;
+          const c = col + dc;
+          if (r >= 0 && r < boardSize && c >= 0 && c < boardSize) {
+            const index = r * boardSize + c;
+            if (board[index].dataset.mine === 'true') count++;
+          }
+        }
+      }
+      return count;
+    }
+
+    function revealEmptyArea(cell) {
+      const queue = [cell];
+      while (queue.length > 0) {
+        const current = queue.shift();
+        const r = parseInt(current.dataset.row);
+        const c = parseInt(current.dataset.col);
+
+        if (current.classList.contains('revealed')) continue;
+        current.classList.add('revealed');
+
+        const count = countAdjacentMines(current);
+        if (count > 0) {
+          current.textContent = count;
+        } else {
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              const nr = r + dr;
+              const nc = c + dc;
+              if (nr >= 0 && nr < boardSize && nc >= 0 && nc < boardSize) {
+                const neighbor = board[nr * boardSize + nc];
+                if (!neighbor.classList.contains('revealed')) {
+                  queue.push(neighbor);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    function revealAll() {
+      board.forEach(cell => {
+        if (cell.dataset.mine === 'true') {
+          cell.textContent = '💣';
+          cell.classList.add('revealed');
+        }
+      });
+    }
+
+    function checkWin() {
+      const allNonMinesRevealed = board.every(cell => {
+        return (cell.dataset.mine === 'true' && cell.classList.contains('flagged')) ||
+               (cell.dataset.mine !== 'true' && cell.classList.contains('revealed'));
+      });
+
+      if (allNonMinesRevealed) {
+        clearInterval(timer);
+        alert('🎉 승리했습니다!');
+      }
+    }
+
+    function resetGame() {
+      createBoard();
+    }
+
+    window.onload = createBoard;
+  </script>
+</body>
+</html>
